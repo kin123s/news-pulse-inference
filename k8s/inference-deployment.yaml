@@ -1,0 +1,194 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inference-server
+  namespace: news-analysis
+  labels:
+    app: inference-server
+    component: ml-inference
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: inference-server
+  template:
+    metadata:
+      labels:
+        app: inference-server
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: inference
+        image: news-inference:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+          name: http
+          protocol: TCP
+        env:
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          value: "kafka:9093"
+        - name: KAFKA_INPUT_TOPIC
+          value: "news_stream"
+        - name: KAFKA_OUTPUT_TOPIC
+          value: "analyzed_news"
+        - name: REDIS_HOST
+          value: "redis"
+        - name: REDIS_PORT
+          value: "6379"
+        - name: MAX_CONCURRENT_REQUESTS
+          value: "20"
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: openai-api-key
+              optional: true
+        
+        # GPU 리소스 요청 (선택사항)
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+            # GPU가 필요한 경우 아래 주석 해제
+            # nvidia.com/gpu: "1"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+            # nvidia.com/gpu: "1"
+        
+        # 헬스체크
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        
+        # 스타트업 프로브 (모델 로딩 시간 고려)
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 0
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 30
+        
+        # 리소스 최적화
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: cache
+          mountPath: /root/.cache
+      
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: cache
+        emptyDir: {}
+      
+      # GPU 노드 선택 (GPU 사용 시)
+      # nodeSelector:
+      #   accelerator: nvidia-tesla-t4
+      
+      # Tolerations for GPU nodes
+      # tolerations:
+      # - key: nvidia.com/gpu
+      #   operator: Exists
+      #   effect: NoSchedule
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: inference-server
+  namespace: news-analysis
+  labels:
+    app: inference-server
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8000
+    targetPort: 8000
+    protocol: TCP
+    name: http
+  selector:
+    app: inference-server
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: inference-server-hpa
+  namespace: news-analysis
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: inference-server
+  minReplicas: 2
+  maxReplicas: 20
+  metrics:
+  # CPU 기반 스케일링
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  
+  # 메모리 기반 스케일링
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  
+  # 커스텀 메트릭 기반 스케일링 (Prometheus Adapter 필요)
+  - type: Pods
+    pods:
+      metric:
+        name: inference_requests_per_second
+      target:
+        type: AverageValue
+        averageValue: "100"
+  
+  # 스케일링 동작 설정
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300  # 5분 안정화
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+      selectPolicy: Min
+    
+    scaleUp:
+      stabilizationWindowSeconds: 0  # 즉시 스케일업
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 30
+      - type: Pods
+        value: 4
+        periodSeconds: 30
+      selectPolicy: Max
