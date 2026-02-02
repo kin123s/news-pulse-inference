@@ -1,0 +1,22 @@
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+# Stream processing
+faust-streaming==0.10.12
+bytewax==0.18.1
+# Async Kafka client
+aiokafka==0.10.0
+redis==5.0.1
+httpx==0.26.0
+# Pydantic V2 for data validation
+pydantic==2.5.3
+pydantic-settings==2.1.0
+python-dotenv==1.0.0
+websockets==12.0
+prometheus-client==0.19.0
+# ML/AI inference
+openai==1.10.0
+transformers==4.37.0
+torch==2.1.2
+# Additional utilities
+aiofiles==23.2.1
+tenacity==8.2.3
