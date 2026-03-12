@@ -184,8 +184,8 @@ sequenceDiagram
 
 ```bash
 # 저장소 클론
-git clone <repository-url>
-cd prj-py
+git clone https://github.com/kin123s/news-pulse-inference.git
+cd news-pulse-inference
 
 # 환경 변수 설정
 cp .env.example .env
